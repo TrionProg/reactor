@@ -14,24 +14,18 @@ pub use sender::Sender;
 
 pub trait ThreadTrait:Clone + Copy + Eq + PartialEq + Display{}
 
-pub enum ReactorError<T:ThreadTrait> {
-    BrockenChannel(ErrorInfo,T),
-}
+pub struct BrockenChannel<T:ThreadTrait> (T);
 
 use std::fmt::Display;
-impl<T:ThreadTrait> std::fmt::Display for ReactorError<T>{
+impl<T:ThreadTrait> std::fmt::Display for BrockenChannel<T>{
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match *self{
-            ReactorError::BrockenChannel(ref error_info, ref thread) => write!(f, "{} Brocken Channel {}",error_info,thread),
-        }
+        write!(f, "Brocken Channel {}",self.0)
     }
 }
 
-impl<T:ThreadTrait> std::fmt::Debug for ReactorError<T>{
+impl<T:ThreadTrait> std::fmt::Debug for BrockenChannel<T>{
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match *self{
-            ReactorError::BrockenChannel(ref error_info, ref thread) => write!(f, "{} Brocken Channel {}",error_info,thread),
-        }
+        write!(f, "Brocken Channel {}",self.0)
     }
 }
 
