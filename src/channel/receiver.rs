@@ -1,53 +1,151 @@
 
-use nes::{ErrorInfo,ErrorInfoTrait};
-
 use std::collections::VecDeque;
 use std::sync::mpsc;
+use failure::Error;
 
 use ::ThreadTrait;
-use ::BrockenChannel;
 
-pub struct Receiver<T:ThreadTrait,C> {
-    pub receiver:mpsc::Receiver<C>,
-    pub commands:VecDeque<C>,
-    pub thread:T,
+use super::BrockenChannel;
+use super::Message;
+
+pub struct Receiver<T:ThreadTrait,S,C> {
+    receiver:mpsc::Receiver< Message<T,S,C> >,
+    deffered_commands:VecDeque< (T,C) >,
+    thread:T,
 }
 
-impl<T:ThreadTrait,C> Receiver<T,C> {
-    pub fn new(receiver:mpsc::Receiver<C>,thread:T) -> Self {
+/*
+pub struct Signal<T:ThreadTrait,S> {
+    pub thread:T,
+    pub signal:S
+}
+
+pub struct Command<T:ThreadTrait,C> {
+    pub thread:T,
+    pub command:C
+}
+*/
+
+impl<T:ThreadTrait,S,C> Receiver<T,S,C> {
+    pub fn new(receiver:mpsc::Receiver< Message<T,S,C> >, thread:T) -> Self {
         Receiver {
             receiver,
-            commands:VecDeque::with_capacity(4),
+            deffered_commands:VecDeque::with_capacity(4),
             thread,
         }
     }
 
-    pub fn recv_block(&mut self) -> Result<C,BrockenChannel<T>> {
-        match self.commands.pop_back() {
-            Some(command) => Ok(command),
-            None => match self.receiver.recv() {
-                Ok(command) => ok!(command),
-                Err(_) => Err(self.error()),
+    pub fn recv<F>(&mut self, filter:F) -> Result<Message<T,S,C>,Error> where
+        F:Fn(&T,&C) -> bool
+    {
+        let mut delete=None;
+        for (i,&(ref thread, ref command)) in self.deffered_commands.iter().enumerate() {
+            if filter(thread,command) {
+                delete=Some(i);
+                break;
+            }
+        }
+
+        match delete {
+            Some(index) => {
+                let (thread,command)=self.deffered_commands.remove(index).unwrap();
+                return ok!( Message::new_command(thread, command) );
+            },
+            None => {
+                loop {
+                    match self.receiver.recv() {
+                        Ok(message) => {
+                            match message {
+                                Message::Signal(..) => return ok!(message),
+                                Message::Command(thread, command) => {
+                                    if filter(&thread, &command) {
+                                        return ok!( Message::new_command(thread, command) );
+                                    }
+
+                                    self.deffered_commands.push_back( (thread, command) );
+                                }
+                            }
+                        },
+                        Err(_) => bail!(self.error()),
+                    }
+                }
             }
         }
     }
 
-    pub fn recv(&mut self) -> Result<Option<C>,BrockenChannel<T>> {
+
+    pub fn recv_nonblock<F>(&mut self, filter:F) -> Result<Option< Message<T,S,C> >,Error> where
+        F:Fn(&T,&C) -> bool
+    {
+        let mut delete=None;
+        for (i,&(ref thread, ref command)) in self.deffered_commands.iter().enumerate() {
+            if filter(thread,command) {
+                delete=Some(i);
+                break;
+            }
+        }
+
+        match delete {
+            Some(index) => {
+                let (thread,command)=self.deffered_commands.remove(index).unwrap();
+                ok!(Some( Message::new_command(thread, command) ))
+            },
+            None => {
+                match self.receiver.try_recv() {
+                    Ok(message) => {
+                        match message {
+                            Message::Signal(..) => ok!(Some( message )),
+                            Message::Command(thread, command) => {
+                                if filter(&thread, &command) {
+                                    ok!(Some( Message::new_command(thread, command) ))
+                                }else{
+                                    self.deffered_commands.push_back( (thread, command) );
+                                    ok!(None)
+                                }
+                            }
+                        }
+                    },
+                    Err(_) => bail!(self.error()),
+                }
+            }
+        }
+    }
+
+/*
+        //for i in 0..self.deffered_commands.len() {
+
+        if self.deffered_commands.len()>0 {
+
+
+        let
+        match self.commands.pop_back() {
+            Some(command) => Ok(command),
+            None => match self.receiver.recv() {
+                Ok((thread,command)) => ok!(command),
+                Err(_) => bail!(self.error()),
+            }
+        }
+    }
+*/
+    /*
+    pub fn recv_noblock(&mut self) -> Result<Option<C>,Error> {
         match self.commands.pop_back() {
             Some(command) => Ok(Some(command)),
             None => match self.receiver.try_recv() {
                 Ok(command) => ok!(Some(command)),
                 Err(mpsc::TryRecvError::Empty) => ok!(None),
-                Err(_) => Err(self.error()),
+                Err(_) => bail!(self.error()),
             }
         }
     }
+    */
 
     pub fn error(&self) -> BrockenChannel<T> {
         BrockenChannel(self.thread.clone())
     }
 }
 
+/*
 #[macro_export]
 macro_rules! try_recv{
     [ $receiver:expr ] => {
@@ -80,6 +178,8 @@ macro_rules! try_recv_block{
     };
 }
 
+*/
+
 /*
 let command_data=if $receiver.commands.len()>0 {
     let mut command_data=None;
@@ -97,6 +197,7 @@ let command_data=if $receiver.commands.len()>0 {
 }
 */
 
+/*
 #[macro_export]
 macro_rules! wait {
     [ $receiver:expr, $expect_ok:pat => $expect_ok_do:expr ] => {
@@ -126,7 +227,7 @@ macro_rules! wait {
                             $expect_ok => break Ok($expect_ok_do),
                             _ => $receiver.commands.push_front(command),
                         },
-                        Err(e) => break err!(Error::BrockenChannel, Box::new($receiver.error()) ),
+                        Err(e) => Err(Error::from($receiver.error()))
                     }
                 },
                 Some(command_data) => Ok(command_data)
@@ -163,7 +264,7 @@ macro_rules! wait {
                             )*
                             _ => $receiver.commands.push_front(command),
                         },
-                        Err(e) => break err!(Error::BrockenChannel, Box::new($receiver.error()) ),
+                        Err(e) => break Err(Error::from($receiver.error())),
                     }
                 },
                 Some(command) => {
@@ -176,3 +277,4 @@ macro_rules! wait {
         }
     };
 }
+*/

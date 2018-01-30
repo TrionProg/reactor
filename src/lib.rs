@@ -1,35 +1,23 @@
 
 #[macro_use]
-extern crate nes;
-use nes::{ErrorInfo};
+extern crate failure;
+
+#[macro_use]
+#[macro_export]
+pub mod macros;
 
 #[macro_export]
-pub mod receiver;
-pub use receiver::Receiver;
+pub mod channel;
+pub use channel::*;
 
 #[macro_export]
-pub mod sender;
-pub use sender::Sender;
+pub mod mutex;
+pub use mutex::Mutex;
 
+use std::fmt::{Display,Debug};
 
-pub trait ThreadTrait:Clone + Copy + Eq + PartialEq + Display{}
+pub trait ThreadTrait:Clone + Copy + Eq + Send + Sync + PartialEq + Display + Debug + 'static{}
 
-pub struct BrockenChannel<T:ThreadTrait> (T);
-
-use std::fmt::Display;
-impl<T:ThreadTrait> std::fmt::Display for BrockenChannel<T>{
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Brocken Channel {}",self.0)
-    }
-}
-
-impl<T:ThreadTrait> std::fmt::Debug for BrockenChannel<T>{
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Brocken Channel {}",self.0)
-    }
-}
-
-pub fn create_channel<T:ThreadTrait,C>(thread:T) -> (Sender<T,C>, Receiver<T,C>) {
-    let (sender, receiver) = std::sync::mpsc::channel();
-    (Sender::new(sender, thread), Receiver::new(receiver, thread))
-}
+#[derive(Fail, Debug)]
+#[fail(display = "Mutex has been poisoned")]
+pub struct MutexPoisoned;

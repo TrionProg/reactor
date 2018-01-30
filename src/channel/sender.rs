@@ -1,39 +1,57 @@
 
-use nes::{ErrorInfo,ErrorInfoTrait};
-
 use std::sync::mpsc;
+use failure::Error;
 
 use ::ThreadTrait;
-use ::BrockenChannel;
 
-pub struct Sender<T:ThreadTrait,C> {
-    pub sender:mpsc::Sender<C>,
-    pub thread:T,
+use super::BrockenChannel;
+use super::Message;
+
+pub struct Sender<T:ThreadTrait,S,C> {
+    sender:mpsc::Sender< Message<T,S,C> >,
+    to_thread:T,
+    from_thread:T,
 }
 
-impl<T:ThreadTrait,C> Sender<T,C> {
-    pub fn new(sender:mpsc::Sender<C>, thread:T) -> Self {
+impl<T:ThreadTrait,S,C> Sender<T,S,C> {
+    pub fn new(sender:mpsc::Sender< Message<T,S,C> >, to_thread:T) -> Self {
         Sender{
             sender,
-            thread
+            to_thread,
+            from_thread:to_thread
         }
     }
 
-    pub fn send(&mut self, command:C) -> Result<(), BrockenChannel<T>> {
-        match self.sender.send(command) {
+    pub fn send_signal(&self, signal:S) -> Result<(), Error> {
+        let message=Message::new_signal(self.from_thread,signal);
+
+        match self.sender.send(message) {
             Ok(_) => Ok(()),
-            Err(_) => Err(BrockenChannel(self.thread.clone())),
+            Err(_) => bail!(BrockenChannel(self.to_thread.clone())),
         }
     }
 
-    //pub fn send_crash(found:T, thread:T) 
+    pub fn send_command(&self, command:C) -> Result<(), Error> {
+        let message=Message::new_command(self.from_thread,command);
+
+        match self.sender.send(message) {
+            Ok(_) => Ok(()),
+            Err(_) => bail!(BrockenChannel(self.to_thread.clone())),
+        }
+    }
+
+    pub fn set_thread(&mut self, thread:T) {
+        self.from_thread=thread;
+    }
+    //pub fn send_crash(found:T, thread:T)
 }
 
-impl<T:ThreadTrait,C> Clone for Sender<T,C> {
+impl<T:ThreadTrait,S,C> Clone for Sender<T,S,C> {
     fn clone(&self) -> Self {
         Sender {
             sender:self.sender.clone(),
-            thread:self.thread.clone()
+            to_thread:self.to_thread.clone(),
+            from_thread:self.from_thread.clone()
         }
     }
 }
